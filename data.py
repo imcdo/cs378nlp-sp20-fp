@@ -11,11 +11,13 @@ import torch
 from torch.utils.data import Dataset
 from random import shuffle
 from utils import cuda, load_dataset
-
+# from spacy.lang.en import English
+import spacy
 
 PAD_TOKEN = '[PAD]'
 UNK_TOKEN = '[UNK]'
 
+ENT_TOKEN = '[ENT]'
 
 class Vocabulary:
     """
@@ -54,7 +56,7 @@ class Vocabulary:
             (at position 0) and `UNK_TOKEN` (at position 1) are prepended.
         """
         vocab = collections.defaultdict(int)
-        for (_, passage, question, _, _) in samples:
+        for (_, passage, raw_passage, question, _, _) in samples:
             for token in itertools.chain(passage, question):
                 vocab[token.lower()] += 1
         top_words = [
@@ -140,6 +142,10 @@ class QADataset(Dataset):
     def __init__(self, args, path):
         self.args = args
         self.meta, self.elems = load_dataset(path)
+
+        # init spaCy 
+        self.nlp = spacy.load("en_core_web_sm")
+
         self.samples = self._create_samples()
         self.tokenizer = None
         self.batch_size = args.batch_size if 'batch_size' in args else 1
@@ -156,7 +162,14 @@ class QADataset(Dataset):
         """
         samples = []
         for elem in self.elems:
+
+            context = self.nlp(elem['context'])
+            # passage = [t.text.lower() for t in context]
+
             # Unpack the context paragraph. Shorten to max sequence length.
+            raw_passage =[
+                token.lower() for (token, offset) in elem['context_tokens']
+            ][:self.args.max_context_length]
             passage = [
                 token.lower() for (token, offset) in elem['context_tokens']
             ][:self.args.max_context_length]
@@ -169,16 +182,68 @@ class QADataset(Dataset):
                     token.lower() for (token, offset) in qa['question_tokens']
                 ][:self.args.max_question_length]
 
+                
+                # def list_find_string(body, search):
+                #     search = search.strip().replace(" ", "")
+                #     search = ''.join(search.split())
+                #     for idx in range(len(body)):
+                #         num_in_search = len(search)
+                #         s_slice = []
+                #         i = 0
+                #         while idx+i < len(body) and num_in_search > 0:
+                #             s_slice.append(body[idx + i].strip().replace(" ", ""))
+                #             body[idx + i] = ''.join(body[idx + i].split())
+                #             i+=1
+                #             num_in_search -= len(s_slice[-1])
+                        
+                #         sub_str = "".join(s_slice).strip().replace(" ", "")
+                #         sub_str = ''.join(sub_str.split())
+                #         print(search)
+                #         print(sub_str)
+                #         if num_in_search != 0: continue
+
+                        
+                #         if sub_str == search:
+                #             return idx
+                        
+                #     print(body)
+                #     print(search)
+                #     return None
+
+            
+                # answer_string = qa['answers'][0].lower()
+                # answer_start = list_find_string(passage, answer_string)
+                # if(answer_start == None):
+                #     print(qa['detected_answers'][0]['token_spans'][0])
+                #     input()
+
+                # answer_end = answer_start + 0 #todofigure
+
+                # out_passage = passage[:self.args.max_context_length]
+
                 # Select the first answer span, which is formatted as
                 # (start_position, end_position), where the end_position
                 # is inclusive.
                 answers = qa['detected_answers']
                 answer_start, answer_end = answers[0]['token_spans'][0]
+
+                # add NER to the passage data
+                ents = context.ents
+                for ent in ents:
+                    if ent.text.lower() in passage: 
+                        idx = passage.index(ent.text.lower())
+                        passage[idx] += f"{ENT_TOKEN}{ent.label_}"
+                        # print("dksujfhsikdfhujo")
+                    # else:
+                    #     print(passage)
+                    #     print(ent.text.lower())
+                    #     input()
                 samples.append(
-                    (qid, passage, question, answer_start, answer_end)
+                    (qid, passage, raw_passage, question, answer_start, answer_end)
                 )
-                
         return samples
+
+    
 
     def _create_data_generator(self, shuffle_examples=False):
         """
@@ -205,7 +270,7 @@ class QADataset(Dataset):
         end_positions = []
         for idx in example_idxs:
             # Unpack QA sample and tokenize passage/question.
-            qid, passage, question, answer_start, answer_end = self.samples[idx]
+            qid, passage, raw_passage, question, answer_start, answer_end = self.samples[idx]
 
             # Convert words to tensor.
             passage_ids = torch.tensor(

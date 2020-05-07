@@ -14,5 +14,7 @@ unzip glove.6B.zip
 mv glove.6B.*.txt glove/
 rm glove.6B.zip
 
+python -m spacy download en
+
 echo
 echo "done!"
