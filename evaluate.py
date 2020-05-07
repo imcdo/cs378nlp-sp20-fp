@@ -115,7 +115,8 @@ def read_predictions(prediction_file):
         Predictions dict mapping question id (qid) to answer span.
     """
     predictions = {}
-    with open(prediction_file) as f:
+    
+    with open(prediction_file, encoding='utf-8') as f:
         for line in f:
             example = json.loads(line)
             predictions[example['qid']] = example['answer']

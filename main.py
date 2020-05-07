@@ -438,7 +438,7 @@ def write_predictions(args, model, dataset):
                 outputs.append({'qid': qid, 'answer': pred_span})
 
     # Write predictions to output file.
-    with open(args.output_path, 'w+') as f:
+    with open(args.output_path, 'w+', encoding='utf-8') as f:
         for elem in outputs:
             f.write(f'{json.dumps(elem)}\n')
 
