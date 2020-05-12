@@ -17,7 +17,8 @@ import spacy
 PAD_TOKEN = '[PAD]'
 UNK_TOKEN = '[UNK]'
 
-ENT_TOKEN = '[ENT]'
+ENT_TOKEN = '[ent]'
+POS_TOKEN = '[pos]'
 
 class Vocabulary:
     """
@@ -144,6 +145,7 @@ class QADataset(Dataset):
         self.meta, self.elems = load_dataset(path)
 
         # init spaCy 
+        pipeline = ["tagger", "parser", "ner"]
         self.nlp = spacy.load("en_core_web_sm")
 
         self.samples = self._create_samples()
@@ -162,64 +164,72 @@ class QADataset(Dataset):
         """
         samples = []
         for elem in self.elems:
-
-            context = self.nlp(elem['context'])
-            # passage = [t.text.lower() for t in context]
-
             # Unpack the context paragraph. Shorten to max sequence length.
             raw_passage =[
                 token.lower() for (token, offset) in elem['context_tokens']
             ][:self.args.max_context_length]
-            passage = [
-                token.lower() for (token, offset) in elem['context_tokens']
-            ][:self.args.max_context_length]
+            passage = list(raw_passage)
+            context = self.nlp(elem['context'], disable=['tokenizer'])
+
+            token_idx_map = {}
+            for word in context:
+                if word.text.lower() in passage:
+                    idx = passage.index(word.text.lower())
+                    token_idx_map[word.text.lower()] = idx
+
+            # passage = [t.text.lower() for t in context]
+            # add POS
+            # for word in context:
+            #     if word.text.lower() in token_idx_map:
+            #         idx = token_idx_map[word.text.lower()]
+            #         passage[idx] += f'{POS_TOKEN}{word.pos_}'.lower()
+                    
+            # add NER to the passage data
+            ents = context.ents
+            for ent in ents:
+                if ent.text.lower() in token_idx_map: 
+                    idx = token_idx_map[ent.text.lower()]
+                    passage[idx] += f"{ENT_TOKEN}{ent.label_}".lower()
+                    # print(passage[idx])
+                        
+
+
+            
 
             # Each passage has several questions associated with it.
             # Additionally, each question has multiple possible answer spans.
             for qa in elem['qas']:
                 qid = qa['qid']
-                question = [
+                raw_question = [
                     token.lower() for (token, offset) in qa['question_tokens']
-                ][:self.args.max_question_length]
+                ]
 
-                
-                # def list_find_string(body, search):
-                #     search = search.strip().replace(" ", "")
-                #     search = ''.join(search.split())
-                #     for idx in range(len(body)):
-                #         num_in_search = len(search)
-                #         s_slice = []
-                #         i = 0
-                #         while idx+i < len(body) and num_in_search > 0:
-                #             s_slice.append(body[idx + i].strip().replace(" ", ""))
-                #             body[idx + i] = ''.join(body[idx + i].split())
-                #             i+=1
-                #             num_in_search -= len(s_slice[-1])
+                # if all(cache[t] not in cache or len(cache[t]) == 1 for t in raw_question):
+                #     for
+
+                question = raw_question[:self.args.max_question_length]
+                processed_question = self.nlp(qa['question'])
+
+                qtoken_idx_map = {}
+                for word in processed_question:
+                    if word.text.lower() in question:
+                        idx = question.index(word.text.lower())
+                        qtoken_idx_map[word.text.lower()] = idx
+
+                # add POS
+                # for word in processed_question:
+                #     if word.text.lower() in qtoken_idx_map:
+                #         idx = qtoken_idx_map[word.text.lower()]
+                #         question[idx] += f'{POS_TOKEN}{word.pos_}'.lower()
                         
-                #         sub_str = "".join(s_slice).strip().replace(" ", "")
-                #         sub_str = ''.join(sub_str.split())
-                #         print(search)
-                #         print(sub_str)
-                #         if num_in_search != 0: continue
-
-                        
-                #         if sub_str == search:
-                #             return idx
-                        
-                #     print(body)
-                #     print(search)
-                #     return None
-
-            
-                # answer_string = qa['answers'][0].lower()
-                # answer_start = list_find_string(passage, answer_string)
-                # if(answer_start == None):
-                #     print(qa['detected_answers'][0]['token_spans'][0])
-                #     input()
-
-                # answer_end = answer_start + 0 #todofigure
-
-                # out_passage = passage[:self.args.max_context_length]
+                # add NER to the passage data
+                ents = processed_question.ents
+                for ent in ents:
+                    # print(ent)
+                    if ent.text.lower() in qtoken_idx_map: 
+                        idx = qtoken_idx_map[ent.text.lower()]
+                        question[idx] += f"{ENT_TOKEN}{ent.label_}".lower()
+                        # print(passage[idx])
 
                 # Select the first answer span, which is formatted as
                 # (start_position, end_position), where the end_position
@@ -227,17 +237,11 @@ class QADataset(Dataset):
                 answers = qa['detected_answers']
                 answer_start, answer_end = answers[0]['token_spans'][0]
 
-                # add NER to the passage data
-                ents = context.ents
-                for ent in ents:
-                    if ent.text.lower() in passage: 
-                        idx = passage.index(ent.text.lower())
-                        passage[idx] += f"{ENT_TOKEN}{ent.label_}"
-                        # print("dksujfhsikdfhujo")
-                    # else:
-                    #     print(passage)
-                    #     print(ent.text.lower())
-                    #     input()
+              
+                # print(passage)
+                # print(question)
+                # input()
+            
                 samples.append(
                     (qid, passage, raw_passage, question, answer_start, answer_end)
                 )
@@ -251,7 +255,7 @@ class QADataset(Dataset):
         generator.
 
         Args:
-            shuffle_examples: If `True`, shuffle examples. Default: `False`
+            shuffle_examples: If `True`, shunffle examples. Default: `False`
 
         Returns:
             A generator that iterates through all examples one by one.

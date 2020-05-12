@@ -31,7 +31,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
 
-from data import QADataset, Tokenizer, Vocabulary
+from data import QADataset, Tokenizer, Vocabulary, ENT_TOKEN
 
 from model import BaselineReader
 from utils import cuda, search_span_endpoints, unpack
@@ -178,7 +178,7 @@ parser.add_argument(
 )
 parser.add_argument(
     '--rnn_cell_type',
-    choices=['lstm', 'gru'],
+    choices=['lstm', 'gru', 'bert'],
     default='lstm',
     help='Type of RNN cell',
 )
@@ -421,7 +421,7 @@ def write_predictions(args, model, dataset):
             for j in range(start_logits.size(0)):
                 # Find question index and passage.
                 sample_index = args.batch_size * i + j
-                qid, encoded_passage, passage, _, _, _ = dataset.samples[sample_index]
+                qid, passage, raw_passage, _, _, _ = dataset.samples[sample_index]
 
                 # Unpack start and end probabilities. Find the constrained
                 # (start, end) pair that has the highest joint probability.
@@ -432,7 +432,7 @@ def write_predictions(args, model, dataset):
                 )
                 
                 # Grab predicted span.
-                pred_span = ' '.join(passage[start_index:(end_index + 1)])
+                pred_span = ' '.join(raw_passage[start_index:(end_index + 1)])
 
                 # Add prediction to outputs.
                 outputs.append({'qid': qid, 'answer': pred_span})
@@ -466,6 +466,10 @@ def main(args):
 
     # Create vocabulary and tokenizer.
     vocabulary = Vocabulary(train_dataset.samples, args.vocab_size)
+
+    # print(vocabulary.words)
+    # input()
+
     tokenizer = Tokenizer(vocabulary)
     for dataset in (train_dataset, dev_dataset):
         dataset.register_tokenizer(tokenizer)

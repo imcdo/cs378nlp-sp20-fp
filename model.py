@@ -10,6 +10,7 @@ import torch.nn.functional as F
 
 from utils import cuda, load_cached_embeddings
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from transformers import BertModel, BertConfig
 
 
 def _sort_batch_by_length(tensor, sequence_lengths):
@@ -169,6 +170,8 @@ class BaselineReader(nn.Module):
     """
     def __init__(self, args):
         super().__init__()
+        self.pbert = None
+        self.qbert = None
 
         self.args = args
         self.pad_token_id = args.pad_token_id
@@ -179,23 +182,33 @@ class BaselineReader(nn.Module):
         # Initialize Context2Query (2)
         self.aligned_att = AlignedAttention(args.embedding_dim)
 
-        rnn_cell = nn.LSTM if args.rnn_cell_type == 'lstm' else nn.GRU
+        rnn_cell = nn.GRU
+        if args.rnn_cell_type == 'lstm': rnn_cell = nn.LSTM 
+        if args.rnn_cell_type == 'bert': 
+            passage_conf = BertConfig(args.embedding_dim * 2) 
+            question_conf = BertConfig(args.embedding_dim) 
+            self.pbert = BertModel(passage_conf)
+            self.passage_rnn = self.pbert
+            self.qbert = BertModel(question_conf)
+            self.question_rnn = self.pbert
 
-        # Initialize passage encoder (3)
-        self.passage_rnn = rnn_cell(
-            args.embedding_dim * 2,
-            args.hidden_dim,
-            bidirectional=args.bidirectional,
-            batch_first=True,
-        )
 
-        # Initialize question encoder (4)
-        self.question_rnn = rnn_cell(
-            args.embedding_dim,
-            args.hidden_dim,
-            bidirectional=args.bidirectional,
-            batch_first=True,
-        )
+        else:
+            # Initialize passage encoder (3)
+            self.passage_rnn = rnn_cell(
+                args.embedding_dim * 2,
+                args.hidden_dim,
+                bidirectional=args.bidirectional,
+                batch_first=True,
+            )
+
+            # Initialize question encoder (4)
+            self.question_rnn = rnn_cell(
+                args.embedding_dim,
+                args.hidden_dim,
+                bidirectional=args.bidirectional,
+                batch_first=True,
+            )
 
         self.dropout = nn.Dropout(self.args.dropout)
 
@@ -300,6 +313,11 @@ class BaselineReader(nn.Module):
             passage_embeddings, passage_lengths, self.passage_rnn
         )  # [batch_size, p_len, p_hid]
         passage_hidden = self.dropout(passage_hidden)  # [batch_size, p_len, p_hid]
+
+        # bert injection
+        if self.pbert is not None:
+            question_embeddings = self.qbert(question_embeddings)
+            passage_embeddings = self.pbert(passage_embeddings)
 
         # 4) Question Encoder: Encode question embeddings.
         question_hidden = self.sorted_rnn(
