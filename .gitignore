@@ -6,3 +6,4 @@ venv/
 *.jsonl.gz
 glove/
 models/
+*.pkl.pgz

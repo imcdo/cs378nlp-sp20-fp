@@ -7,18 +7,58 @@ Author:
 import collections
 import itertools
 import torch
+import gzip
+import pickle
+
+from tqdm import tqdm
 
 from torch.utils.data import Dataset
 from random import shuffle
 from utils import cuda, load_dataset
 # from spacy.lang.en import English
 import spacy
+import nltk
 
 PAD_TOKEN = '[PAD]'
 UNK_TOKEN = '[UNK]'
 
 ENT_TOKEN = '[ent]'
 POS_TOKEN = '[pos]'
+total_tokens = set()
+
+def extract_entity_names(tokens, use_pos=False):
+    entity_names = []
+    # preprocess
+    pos = nltk.pos_tag(tokens)
+    ne = nltk.ne_chunk(pos)
+
+
+    labels = set(('FACILITY', 'GPE', 'GSP', 'LOCATION', 'ORGANIZATION', 'PERSON'))
+    def indexed_tree_traverse(t, idx=0):
+        vals=[]
+        
+        if type(t) == nltk.tree.Tree:
+            
+            if t.height() == 1:
+                idx+=1
+            if t.label() in labels:
+                for c in t:
+                    vals.append((idx, str(c[0]) + f'{ENT_TOKEN}{t.label()}'))    
+                    idx+=1
+                
+            else:
+                for c in t:
+                    nv, i = indexed_tree_traverse(c, idx)
+                    vals.extend(nv)
+                    idx = i
+        else:
+            idx += 1
+        
+        return vals, idx
+        
+    ner, idx = indexed_tree_traverse(ne)
+    return ner, pos
+
 
 class Vocabulary:
     """
@@ -142,18 +182,18 @@ class QADataset(Dataset):
     """
     def __init__(self, args, path):
         self.args = args
+        self.dataset = path.split('/')[-1].split('.')[0]
         self.meta, self.elems = load_dataset(path)
 
         # init spaCy 
-        pipeline = ["tagger", "parser", "ner"]
-        self.nlp = spacy.load("en_core_web_sm")
+        # self.nlp = spacy.load("en_core_web_sm")
 
         self.samples = self._create_samples()
         self.tokenizer = None
         self.batch_size = args.batch_size if 'batch_size' in args else 1
         self.pad_token_id = self.tokenizer.pad_token_id \
             if self.tokenizer is not None else 0
-
+    
     def _create_samples(self):
         """
         Formats raw examples to desired form. Any passages/questions longer
@@ -162,20 +202,24 @@ class QADataset(Dataset):
         Returns:
             A list of words (string).
         """
+        if self.args.load_pickle != None:
+            with gzip.open(self.args.load_pickle + self.dataset + '.pkl.pgz', 'r') as f:
+                return pickle.load(f)
+
         samples = []
-        for elem in self.elems:
+        for elem in  tqdm(self.elems, desc='create-samples'):
             # Unpack the context paragraph. Shorten to max sequence length.
             raw_passage =[
-                token.lower() for (token, offset) in elem['context_tokens']
+                token for (token, offset) in elem['context_tokens']
             ][:self.args.max_context_length]
             passage = list(raw_passage)
-            context = self.nlp(elem['context'], disable=['tokenizer'])
+            # context = self.nlp(elem['context'], disable=['tokenizer'])
 
             token_idx_map = {}
-            for word in context:
-                if word.text.lower() in passage:
-                    idx = passage.index(word.text.lower())
-                    token_idx_map[word.text.lower()] = idx
+            # for word in context:
+            #     if word.text.lower() in passage:
+            #         idx = passage.index(word.text.lower())
+            #         token_idx_map[word.text.lower()] = idx
 
             # passage = [t.text.lower() for t in context]
             # add POS
@@ -183,68 +227,100 @@ class QADataset(Dataset):
             #     if word.text.lower() in token_idx_map:
             #         idx = token_idx_map[word.text.lower()]
             #         passage[idx] += f'{POS_TOKEN}{word.pos_}'.lower()
+            #         total_tokens.add(passage[idx])
                     
             # add NER to the passage data
-            ents = context.ents
-            for ent in ents:
-                if ent.text.lower() in token_idx_map: 
-                    idx = token_idx_map[ent.text.lower()]
-                    passage[idx] += f"{ENT_TOKEN}{ent.label_}".lower()
+            # ents = context.ents
+            # for ent in ents:
+            #     if ent.text.lower() in token_idx_map: 
+            #         idx = token_idx_map[ent.text.lower()]
+            #         passage[idx] += f"{ENT_TOKEN}{ent.label_}".lower()
+            #         total_tokens.add(passage[idx])
+
                     # print(passage[idx])
                         
-
-
+            use_pos = False
+            ne, pos =extract_entity_names(passage)
             
+            for i,t in ne:
+                passage[i] = t
+
+            if use_pos:
+                for i,p in enumerate(pos):
+                    passage[i] += f'{POS_TOKEN}{p[1]}'
+                    total_tokens.add(passage[i].lower())
+
+
+            passage = [w.lower() for w in passage]
+            raw_passage = [w.lower() for w in raw_passage]
 
             # Each passage has several questions associated with it.
             # Additionally, each question has multiple possible answer spans.
             for qa in elem['qas']:
                 qid = qa['qid']
                 raw_question = [
-                    token.lower() for (token, offset) in qa['question_tokens']
+                    token for (token, offset) in qa['question_tokens']
                 ]
 
                 # if all(cache[t] not in cache or len(cache[t]) == 1 for t in raw_question):
                 #     for
 
                 question = raw_question[:self.args.max_question_length]
-                processed_question = self.nlp(qa['question'])
+                # processed_question = self.nlp(qa['question'])
 
-                qtoken_idx_map = {}
-                for word in processed_question:
-                    if word.text.lower() in question:
-                        idx = question.index(word.text.lower())
-                        qtoken_idx_map[word.text.lower()] = idx
+                # qtoken_idx_map = {}
+                # for word in processed_question:
+                #     if word.text.lower() in question:
+                #         idx = question.index(word.text.lower())
+                #         qtoken_idx_map[word.text.lower()] = idx
 
                 # add POS
                 # for word in processed_question:
                 #     if word.text.lower() in qtoken_idx_map:
                 #         idx = qtoken_idx_map[word.text.lower()]
                 #         question[idx] += f'{POS_TOKEN}{word.pos_}'.lower()
+                #         total_tokens.add(question[idx])
                         
                 # add NER to the passage data
-                ents = processed_question.ents
-                for ent in ents:
-                    # print(ent)
-                    if ent.text.lower() in qtoken_idx_map: 
-                        idx = qtoken_idx_map[ent.text.lower()]
-                        question[idx] += f"{ENT_TOKEN}{ent.label_}".lower()
+                # ents = processed_question.ents
+                # for ent in ents:
+                #     # print(ent)
+                #     if ent.text.lower() in qtoken_idx_map: 
+                #         idx = qtoken_idx_map[ent.text.lower()]
+                #         question[idx] += f"{ENT_TOKEN}{ent.label_}".lower()
+                #         total_tokens.add(question[idx])
+
                         # print(passage[idx])
 
                 # Select the first answer span, which is formatted as
                 # (start_position, end_position), where the end_position
                 # is inclusive.
+               
+                qne, qpos= extract_entity_names(question)
+                
+                for i,t in qne:
+                    question[i] = t
+                if use_pos:
+                    for i,p in enumerate(qpos):
+                        passage[i] += f'{POS_TOKEN}{p[1]}'
+                        total_tokens.add(question[i].lower())
+
+                        
+                question = [w.lower() for w in question]
+
                 answers = qa['detected_answers']
                 answer_start, answer_end = answers[0]['token_spans'][0]
 
               
-                # print(passage)
-                # print(question)
-                # input()
             
                 samples.append(
                     (qid, passage, raw_passage, question, answer_start, answer_end)
                 )
+                
+        if self.args.write_pickle != None:
+            with gzip.GzipFile(self.args.write_pickle + self.dataset + '.pkl.pgz', 'w') as f:
+                pickle.dump(samples, f)
+        
         return samples
 
     
@@ -254,7 +330,7 @@ class QADataset(Dataset):
         Converts preprocessed text data to Torch tensors and returns a
         generator.
 
-        Args:
+        Args:   
             shuffle_examples: If `True`, shunffle examples. Default: `False`
 
         Returns:

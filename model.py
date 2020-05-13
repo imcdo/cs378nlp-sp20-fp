@@ -13,6 +13,7 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from transformers import BertModel, BertConfig
 
 
+
 def _sort_batch_by_length(tensor, sequence_lengths):
     """
     Sorts input sequences by lengths. This is required by Pytorch
@@ -191,8 +192,6 @@ class BaselineReader(nn.Module):
             self.passage_rnn = self.pbert
             self.qbert = BertModel(question_conf)
             self.question_rnn = self.pbert
-
-
         else:
             # Initialize passage encoder (3)
             self.passage_rnn = rnn_cell(

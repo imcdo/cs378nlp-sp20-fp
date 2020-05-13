@@ -193,6 +193,22 @@ parser.add_argument(
     default=0.,
     help='dropout on passage and question vectors',
 )
+parser.add_argument(
+    '--load_pickle',
+    type=str,
+    default=None,
+    required=False,
+    help='path to load a pickled samples',
+)
+parser.add_argument(
+    '--write_pickle',
+    type=str,
+    default=None,
+    required=False,
+    help='write out as pickle',
+)
+
+
 
 
 def _print_arguments(args):
@@ -489,7 +505,7 @@ def main(args):
     )
     pct_pretrained = round(num_pretrained / len(vocabulary) * 100., 2)
     print(f'using pre-trained embeddings from \'{args.embedding_path}\'')
-    print(
+    print( 
         f'initialized {num_pretrained}/{len(vocabulary)} '
         f'embeddings ({pct_pretrained}%)'
     )
